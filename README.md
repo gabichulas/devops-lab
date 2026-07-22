@@ -75,9 +75,14 @@ The underlying compute platform bypasses managed Kubernetes services (EKS) in fa
                                                              └───────────────┘
 
 
+
+> [!note]
+> The use of Kubernetes may be a clear overengineering, but the purpose of this project is just practicing and trying to build a production-like environment on the cloud.
+
+
 ---
 
-### Subnet Layout & Network Isolation
+### Subnet Layout
 * **Public Subnets (`10.0.1.0/24`, `10.0.2.0/24`, `10.0.3.0/24`):** Hosts AWS NLB endpoints and NAT Gateways.
 * **Private Subnets (`10.0.10.0/24`, `10.0.20.0/24`, `10.0.30.0/24`):** Hosts 3x K3s Master nodes and N x Worker nodes.
 * **Control Plane HA:** 3-node embedded `etcd` quorum distributed across `us-east-1a`, `us-east-1b`, and `us-east-1c`.
@@ -85,16 +90,16 @@ The underlying compute platform bypasses managed Kubernetes services (EKS) in fa
 
 ---
 
-## Technical Stack & System Components
+## Technical Stack
 
 | Boundary | Technology | Purpose & Architectural Rationale |
 | :--- | :--- | :--- |
-| **IaC** | HashiCorp Terraform ($\ge$ 1.5) | Declarative multi-AZ VPC, S3 storage buckets, SQS queues, IAM roles, and security boundaries. |
+| **IaC** | Terraform | Declarative multi-AZ VPC, S3 storage buckets, SQS queues, IAM roles, and security boundaries. |
 | **Configuration Management** | Ansible | Idempotent system orchestration, K3s cluster coupling, and SSM-based transport execution. |
 | **Container Orchestration** | K3s | Multi-AZ control plane running embedded `etcd` HA quorum. Minimal resource overhead. |
 | **Asynchronous Message Queue** | AWS SQS | Decouples heavy HTTP uploads from TensorFlow model execution. Eliminates API timeout bottlenecks. |
-| **Object Storage** | AWS S3 | Encrypted object store for raw `.wav` uploads and 4-stem output artifacts (`vocals`, `drums`, `bass`, `other`). |
-| **Event-Driven Autoscaling** | KEDA ($\ge$ 2.10) | Dynamically scales TensorFlow inference worker pods from `0` to `N` based on SQS queue depth. |
+| **Object Storage** | AWS S3 | Encrypted object store for raw `.mp3` uploads and 4-stem output artifacts (`vocals`, `drums`, `bass`, `other`). |
+| **Event-Driven Autoscaling** | KEDA | Dynamically scales TensorFlow inference worker pods from `0` to `N` based on SQS queue depth. |
 | **API Gateway** | FastAPI / Uvicorn | Asynchronous web interface for job submission, payload validation, and status tracking. |
 | **ML Inference Engine** | TensorFlow / Keras | Containerized execution environment executing U-Net and Vision Transformer spectrogram transforms. |
 | **Edge Ingress** | Traefik + AWS NLB | Pass-through Layer-4 load balancing at the cloud boundary mapped to in-cluster Layer-7 path routing. |
@@ -113,32 +118,6 @@ The underlying compute platform bypasses managed Kubernetes services (EKS) in fa
    * Passes the spectrogram through the loaded TensorFlow model weights.
    * Reconstructs the 4 output audio stems using Inverse STFT.
 5. The worker uploads `vocals.mp3`, `drums.mp3`, `bass.mp3`, and `other.mp3` to the S3 destination path `stems/<job_id>/`, acknowledges the SQS message, and terminates or awaits the next job.
-
----
-
-## Verification & Chaos Engineering Protocols
-
-### Event-Driven Autoscaling Test
-To validate KEDA queue-length scaling behavior, trigger concurrent job injections:
-
-```bash
-# Push 15 simulated audio processing requests
-python3 scripts/load_test.py --concurrency 15 --endpoint http://<AWS-NLB-DNS>/api/v1/demix/separate
-
-# Monitor real-time worker pod scaling from 0 replicas
-kubectl get pods -n demix -l app=demix-worker -w
-```
-
-### Resiliency & Fault Tolerance Test
-Simulate a worker node crash during active TensorFlow inference:
-
-```bash
-# Terminate an active Worker EC2 instance in AWS
-aws ec2 terminate-instances --instance-ids <TARGET-WORKER-INSTANCE-ID>
-
-# Observe AWS SQS visibility timeout expiration and job recovery by an alternate worker pod
-kubectl get pods -n demix -o wide -w
-```
 
 ---
 
